@@ -7,6 +7,7 @@ services:
       BOTTOKEN: ${BOTTOKEN}
       DATA_DIR: /app/data
       PORT: 8095
+      BRIDGE_RELAY_URL: "https://cutella-bridge-relay.hsdf7rb.workers.dev"
     volumes:
       - ./data:/app/data
     ports:
