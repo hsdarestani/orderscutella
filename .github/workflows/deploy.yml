@@ -31,6 +31,7 @@ jobs:
             REPO=https://github.com/hsdarestani/orderscutella.git
             DOMAIN=orderscutella.smarbiz.sbs
             PORT=8095
+            RELAY=https://cutella-bridge-relay.hsdf7rb.workers.dev
 
             if ! command -v docker >/dev/null 2>&1; then
               curl -fsSL https://get.docker.com | sh
@@ -60,6 +61,12 @@ jobs:
 
             sleep 3
             curl -fsS "http://127.0.0.1:${PORT}/health"
+
+            echo "Cloudflare relay connectivity"
+            curl -sS --connect-timeout 8 --max-time 15 \
+              -o /dev/null \
+              -w 'relay code=%{http_code} remote=%{remote_ip} connect=%{time_connect} tls=%{time_appconnect} total=%{time_total}\n' \
+              "$RELAY/" || true
 
             if ! command -v nginx >/dev/null 2>&1; then
               apt-get update -qq
