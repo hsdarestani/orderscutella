@@ -3,6 +3,7 @@ import logging
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from . import bridge_setup, main
+from .db import del_config
 
 
 async def status_command(update, context):
@@ -11,7 +12,13 @@ async def status_command(update, context):
     await update.message.reply_text(await main.status_text(), reply_markup=main.main_menu())
 
 
+def purge_legacy_woo_credentials():
+    for key in ('woo_ck', 'woo_cs', 'wp_user', 'wp_app_password'):
+        del_config(key)
+
+
 def run():
+    purge_legacy_woo_credentials()
     main.start_health_server()
     app = Application.builder().token(main.TOKEN).build()
     app.add_handler(CommandHandler('start', main.start))
