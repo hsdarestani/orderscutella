@@ -1,0 +1,13 @@
+services:
+  bot:
+    build: .
+    container_name: orderscutella-bot
+    restart: unless-stopped
+    environment:
+      BOTTOKEN: ${BOTTOKEN}
+      DATA_DIR: /app/data
+      PORT: 8095
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:8095:8095"
