@@ -15,4 +15,4 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt
       - run: python -m compileall -q app
-      - run: BOTTOKEN='123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi' python -c "import app.main; print('import ok')"
+      - run: DATA_DIR=/tmp/orderscutella-ci BOTTOKEN='123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi' python -c "import app.main, app.entrypoint; print('import ok')"
