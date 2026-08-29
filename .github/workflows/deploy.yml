@@ -1,0 +1,100 @@
+name: Deploy OrdersCutella Bot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: orderscutella-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to shared Vesta VPS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          BOTTOKEN: ${{ secrets.BOTTOKEN }}
+        with:
+          host: ${{ secrets.HOST }}
+          username: root
+          password: ${{ secrets.PASS }}
+          envs: BOTTOKEN
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+
+            APP_DIR=/opt/orderscutella
+            REPO=https://github.com/hsdarestani/orderscutella.git
+            DOMAIN=orderscutella.smarbiz.sbs
+            PORT=8095
+
+            if ! command -v docker >/dev/null 2>&1; then
+              curl -fsSL https://get.docker.com | sh
+            fi
+            if ! docker compose version >/dev/null 2>&1; then
+              apt-get update -qq
+              apt-get install -y docker-compose-plugin
+            fi
+
+            mkdir -p "$APP_DIR"
+            if [ ! -d "$APP_DIR/.git" ]; then
+              git clone "$REPO" "$APP_DIR"
+            else
+              git -C "$APP_DIR" fetch origin main
+              git -C "$APP_DIR" reset --hard origin/main
+            fi
+
+            mkdir -p "$APP_DIR/data"
+            chmod 700 "$APP_DIR/data"
+            cat > "$APP_DIR/.env" <<EOF
+            BOTTOKEN=$BOTTOKEN
+            EOF
+            chmod 600 "$APP_DIR/.env"
+
+            cd "$APP_DIR"
+            docker compose -p orderscutella up -d --build --remove-orphans
+
+            sleep 3
+            curl -fsS "http://127.0.0.1:${PORT}/health"
+
+            if ! command -v nginx >/dev/null 2>&1; then
+              apt-get update -qq
+              apt-get install -y nginx
+            fi
+
+            cat > "/etc/nginx/sites-available/$DOMAIN" <<EOF
+            server {
+                listen 80;
+                server_name $DOMAIN;
+
+                location / {
+                    proxy_pass http://127.0.0.1:${PORT};
+                    proxy_http_version 1.1;
+                    proxy_set_header Host \$host;
+                    proxy_set_header X-Real-IP \$remote_addr;
+                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto \$scheme;
+                    proxy_read_timeout 180s;
+                }
+            }
+            EOF
+
+            ln -sf "/etc/nginx/sites-available/$DOMAIN" "/etc/nginx/sites-enabled/$DOMAIN"
+            nginx -t
+            systemctl enable --now nginx
+            systemctl reload nginx
+
+            if getent ahostsv4 "$DOMAIN" >/dev/null 2>&1; then
+              if ! command -v certbot >/dev/null 2>&1; then
+                apt-get update -qq
+                apt-get install -y certbot python3-certbot-nginx
+              fi
+              certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect || true
+            fi
+
+            docker compose -p orderscutella ps
+            docker compose -p orderscutella logs --tail=50 bot
