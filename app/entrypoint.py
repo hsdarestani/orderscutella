@@ -2,7 +2,7 @@ import logging
 
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-from . import bridge_setup, main
+from . import bridge_setup, main, product_flow
 from .db import del_config
 
 
@@ -28,6 +28,9 @@ def run():
     app.add_handler(CommandHandler('status', status_command))
     # Must run before the broad text handler so Woo setup never asks for CK/CS.
     app.add_handler(bridge_setup.handler())
+    # Product wizard uses native Telegram buttons and must run before legacy
+    # text/photo handlers so it owns the entire product creation conversation.
+    app.add_handler(product_flow.handler())
     app.add_handler(MessageHandler(filters.Document.ALL, main.document_handler))
     app.add_handler(MessageHandler(filters.PHOTO, main.photo_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, main.text_handler))
