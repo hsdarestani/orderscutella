@@ -3,6 +3,8 @@ import logging
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from . import bridge_setup, main, product_flow
+# Adds browse-all category pages while preserving product_flow's fuzzy search.
+from . import category_browse  # noqa: F401
 from .db import del_config
 
 
