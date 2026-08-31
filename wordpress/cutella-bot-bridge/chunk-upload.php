@@ -58,6 +58,89 @@ function cbb_media_chunk($payload) {
     if ($written !== strlen($bytes)) { throw new Exception('Could not write complete media chunk.'); }
     return array('upload_id'=>$id,'offset'=>$offset,'written'=>$written);
 }
+
+/**
+ * Create an attachment from a file that is already on this server.
+ *
+ * media_handle_sideload() fires the normal attachment/image processing stack.
+ * Some shared hosts have a partial PHP cURL installation where plugins hooked
+ * into that stack call curl_multi_init(), causing the entire upload to fail.
+ * The bridge therefore performs the local move + attachment insert itself and
+ * deliberately suppresses after-insert hooks. Full metadata is generated only
+ * when cURL multi is available; otherwise a safe minimal image metadata record
+ * is stored so WooCommerce can use the original image normally.
+ */
+function cbb_register_local_media($path, $filename) {
+    $uploads = wp_upload_dir();
+    if (!empty($uploads['error'])) { throw new Exception((string)$uploads['error']); }
+    if (!wp_mkdir_p($uploads['path'])) { throw new Exception('Could not create uploads directory.'); }
+
+    $filename = wp_unique_filename($uploads['path'], sanitize_file_name($filename));
+    $destination = trailingslashit($uploads['path']) . $filename;
+
+    if (!@rename($path, $destination)) {
+        if (!@copy($path, $destination)) { throw new Exception('Could not move uploaded media into WordPress uploads.'); }
+        @unlink($path);
+    }
+    @chmod($destination, 0644);
+
+    $checked = wp_check_filetype_and_ext($destination, $filename);
+    $mime = !empty($checked['type']) ? (string)$checked['type'] : '';
+    if ($mime === '') {
+        $basic = wp_check_filetype($filename);
+        $mime = !empty($basic['type']) ? (string)$basic['type'] : '';
+    }
+    if ($mime === '' || strpos($mime, 'image/') !== 0) {
+        @unlink($destination);
+        throw new Exception('Uploaded file is not a supported image.');
+    }
+
+    $title = sanitize_text_field(pathinfo($filename, PATHINFO_FILENAME));
+    $attachment = array(
+        'guid'           => trailingslashit($uploads['url']) . $filename,
+        'post_mime_type' => $mime,
+        'post_title'     => $title !== '' ? $title : 'Cutella product image',
+        'post_content'   => '',
+        'post_status'    => 'inherit',
+    );
+
+    // fire_after_hooks=false prevents third-party attachment hooks from
+    // requiring unavailable curl_multi_* functions on constrained hosts.
+    $attachment_id = wp_insert_attachment($attachment, $destination, 0, true, false);
+    if (is_wp_error($attachment_id)) {
+        @unlink($destination);
+        throw new Exception($attachment_id->get_error_message());
+    }
+
+    $relative = _wp_relative_upload_path($destination);
+    $image_size = function_exists('wp_getimagesize') ? @wp_getimagesize($destination) : @getimagesize($destination);
+    $minimal_metadata = array(
+        'file'       => $relative,
+        'width'      => is_array($image_size) && isset($image_size[0]) ? intval($image_size[0]) : 0,
+        'height'     => is_array($image_size) && isset($image_size[1]) ? intval($image_size[1]) : 0,
+        'sizes'      => array(),
+        'image_meta' => array(),
+    );
+
+    if (function_exists('curl_multi_init')) {
+        try {
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+            $generated = wp_generate_attachment_metadata($attachment_id, $destination);
+            if (is_array($generated) && !empty($generated)) {
+                wp_update_attachment_metadata($attachment_id, $generated);
+            } else {
+                update_post_meta($attachment_id, '_wp_attachment_metadata', $minimal_metadata);
+            }
+        } catch (Throwable $e) {
+            update_post_meta($attachment_id, '_wp_attachment_metadata', $minimal_metadata);
+        }
+    } else {
+        update_post_meta($attachment_id, '_wp_attachment_metadata', $minimal_metadata);
+    }
+
+    return (int)$attachment_id;
+}
+
 function cbb_media_finish($payload) {
     $id = cbb_chunk_id($payload);
     $existing = get_transient(cbb_chunk_result_key($id));
@@ -72,12 +155,8 @@ function cbb_media_finish($payload) {
     if (!hash_equals((string)$meta['sha256'], (string)$actual_hash)) {
         @unlink($path); delete_transient(cbb_chunk_meta_key($id)); cbb_fail('Uploaded media checksum mismatch.', 409);
     }
-    require_once ABSPATH . 'wp-admin/includes/file.php';
-    require_once ABSPATH . 'wp-admin/includes/media.php';
-    require_once ABSPATH . 'wp-admin/includes/image.php';
-    $file = array('name'=>(string)$meta['filename'],'tmp_name'=>$path);
-    $attachment_id = media_handle_sideload($file, 0);
-    if (is_wp_error($attachment_id)) { @unlink($path); throw new Exception($attachment_id->get_error_message()); }
+
+    $attachment_id = cbb_register_local_media($path, (string)$meta['filename']);
     delete_transient(cbb_chunk_meta_key($id));
     $result = array('id'=>(int)$attachment_id,'source_url'=>(string)wp_get_attachment_url($attachment_id));
     set_transient(cbb_chunk_result_key($id), $result, HOUR_IN_SECONDS);
