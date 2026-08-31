@@ -113,6 +113,7 @@ function cbb_register_local_media($path, $filename) {
     }
 
     $relative = _wp_relative_upload_path($destination);
+    update_post_meta($attachment_id, '_wp_attached_file', $relative);
     $image_size = function_exists('wp_getimagesize') ? @wp_getimagesize($destination) : @getimagesize($destination);
     $minimal_metadata = array(
         'file'       => $relative,
