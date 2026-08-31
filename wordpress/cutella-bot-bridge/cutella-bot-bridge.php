@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Cutella Bot Bridge
  * Description: Secure signed bridge between the Cutella Telegram bot and WooCommerce.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Cutella
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -10,7 +10,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 define('CBB_TOKEN_OPTION', 'cutella_bot_bridge_token');
-define('CBB_VERSION', '1.0.0');
+define('CBB_VERSION', '1.0.1');
 require_once __DIR__ . '/chunk-upload.php';
 require_once __DIR__ . '/product-type.php';
 
@@ -50,6 +50,7 @@ function cbb_admin_page() {
     ?>
     <div class="wrap"><h1>Cutella Bot Bridge</h1>
     <p>اتصال امن ربات Cutella به WooCommerce با Signed GET + HMAC.</p>
+    <p><strong>Version:</strong> <?php echo esc_html(CBB_VERSION); ?> &nbsp;|&nbsp; <strong>cURL Multi:</strong> <?php echo function_exists('curl_multi_init') ? 'Available' : 'Compatibility mode'; ?></p>
     <table class="form-table"><tr><th>Bridge Endpoint</th><td><code><?php echo esc_html(cbb_endpoint_url()); ?></code></td></tr>
     <tr><th>Bridge Token</th><td><input id="cbb-token" type="text" readonly value="<?php echo $token; ?>" style="width:min(720px,100%);font-family:monospace" /> <button type="button" class="button" onclick="navigator.clipboard.writeText(document.getElementById('cbb-token').value);this.innerText='کپی شد ✓';">کپی</button></td></tr></table>
     <form method="post" onsubmit="return confirm('توکن قبلی فوراً باطل شود؟');"><?php wp_nonce_field('cbb_regenerate_token'); ?><button class="button" name="cbb_regenerate" value="1">ساخت توکن جدید</button></form>
@@ -142,7 +143,7 @@ function cbb_dispatch($op,$payload) {
         switch($op){
             case 'ping':
                 $counts=wp_count_posts('product'); $total=0; foreach(array('publish','draft','pending','private') as $s){if(isset($counts->{$s})){$total+=(int)$counts->{$s};}}
-                wp_send_json_success(array('version'=>CBB_VERSION,'product_count'=>$total,'site'=>home_url('/'))); break;
+                wp_send_json_success(array('version'=>CBB_VERSION,'product_count'=>$total,'site'=>home_url('/'),'curl_multi'=>function_exists('curl_multi_init'))); break;
             case 'categories':
                 $terms=get_terms(array('taxonomy'=>'product_cat','hide_empty'=>false)); if(is_wp_error($terms)){throw new Exception($terms->get_error_message());}
                 $items=array(); foreach($terms as $t){$items[]=array('id'=>(int)$t->term_id,'name'=>(string)$t->name,'parent'=>(int)$t->parent,'count'=>(int)$t->count);} wp_send_json_success(array('categories'=>$items)); break;
