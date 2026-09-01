@@ -61,12 +61,30 @@ jobs:
 
             sleep 3
             curl -fsS "http://127.0.0.1:${PORT}/health"
+            curl -fsS "http://127.0.0.1:${PORT}/vestaland-order-sync/health"
 
             echo "Cloudflare relay connectivity"
             curl -sS --connect-timeout 8 --max-time 15 \
               -o /dev/null \
               -w 'relay code=%{http_code} remote=%{remote_ip} connect=%{time_connect} tls=%{time_appconnect} total=%{time_total}\n' \
               "$RELAY/" || true
+
+            echo "Cutella signed Bridge paid-order probe (must fail before creating an order)"
+            docker compose -p orderscutella exec -T bot python - <<'PY'
+            from app.integrations import WooClient
+            try:
+                WooClient()._signed_get('create_paid_order', {})
+            except Exception as exc:
+                text = str(exc)
+                print('paid-order-probe=', text)
+                if 'Unknown operation' in text or 'unknown operation' in text.lower():
+                    raise SystemExit('LIVE_CUTELLA_WORDPRESS_BRIDGE_IS_OLD')
+                if 'Invalid Vestaland receipt' not in text:
+                    raise SystemExit('UNEXPECTED_PAID_ORDER_PROBE_RESPONSE: ' + text)
+            else:
+                raise SystemExit('PAID_ORDER_PROBE_UNEXPECTEDLY_SUCCEEDED')
+            print('Cutella WordPress paid-order operation is installed.')
+            PY
 
             if ! command -v nginx >/dev/null 2>&1; then
               apt-get update -qq
