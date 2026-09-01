@@ -120,7 +120,7 @@ class VestalandOrderSyncHTTP(HealthHandler):
             if str(proof.get('metadata_hash') or '').lower() != local_hash:
                 raise ValueError('Hamoon payload hash mismatch.')
 
-            result = WooClient().create_paid_order({
+            result = WooClient()._signed_get('create_paid_order', {
                 'receipt': receipt,
                 'intent': intent,
                 'amount_toman': amount,
