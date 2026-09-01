@@ -8,6 +8,7 @@ on:
       - 'wordpress/cutella-bot-bridge/**'
       - '.github/workflows/package-wordpress-bridge.yml'
 
+# Packaging refresh for Bridge 1.0.2.
 jobs:
   package:
     runs-on: ubuntu-latest
