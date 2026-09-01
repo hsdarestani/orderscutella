@@ -6,6 +6,7 @@ from . import bridge_setup, main, product_flow
 # Adds browse-all category pages while preserving product_flow's fuzzy search.
 from . import category_browse  # noqa: F401
 from .db import del_config
+from .vestaland_order_sync import VestalandOrderSyncHTTP
 
 
 async def status_command(update, context):
@@ -21,6 +22,8 @@ def purge_legacy_woo_credentials():
 
 def run():
     purge_legacy_woo_credentials()
+    # Keep the existing health endpoint while adding verified Vestaland order sync.
+    main.HealthHandler = VestalandOrderSyncHTTP
     main.start_health_server()
     app = Application.builder().token(main.TOKEN).build()
     app.add_handler(CommandHandler('start', main.start))
