@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Cutella Bot Bridge
  * Description: Secure signed bridge between the Cutella Telegram bot and WooCommerce.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Cutella
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -10,9 +10,10 @@
 if (!defined('ABSPATH')) { exit; }
 
 define('CBB_TOKEN_OPTION', 'cutella_bot_bridge_token');
-define('CBB_VERSION', '1.0.1');
+define('CBB_VERSION', '1.0.2');
 require_once __DIR__ . '/chunk-upload.php';
 require_once __DIR__ . '/product-type.php';
+require_once __DIR__ . '/paid-order.php';
 
 register_activation_hook(__FILE__, function () {
     if (!get_option(CBB_TOKEN_OPTION)) { update_option(CBB_TOKEN_OPTION, wp_generate_password(48, false, false), false); }
