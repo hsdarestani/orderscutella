@@ -1,0 +1,36 @@
+name: Package Cutella WordPress Bridge
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'wordpress/cutella-bot-bridge/**'
+      - '.github/workflows/package-wordpress-bridge.yml'
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate PHP package
+        run: |
+          set -euo pipefail
+          test -s wordpress/cutella-bot-bridge/cutella-bot-bridge.php
+          test -s wordpress/cutella-bot-bridge/product-type.php
+          test -s wordpress/cutella-bot-bridge/chunk-upload.php
+          test -s wordpress/cutella-bot-bridge/paid-order.php
+          php -l wordpress/cutella-bot-bridge/cutella-bot-bridge.php
+          php -l wordpress/cutella-bot-bridge/product-type.php
+          php -l wordpress/cutella-bot-bridge/chunk-upload.php
+          php -l wordpress/cutella-bot-bridge/paid-order.php
+      - name: Build installable ZIP
+        run: |
+          cd wordpress
+          zip -qr ../cutella-bot-bridge.zip cutella-bot-bridge
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cutella-bot-bridge-wordpress
+          path: cutella-bot-bridge.zip
+          if-no-files-found: error
+          retention-days: 30
