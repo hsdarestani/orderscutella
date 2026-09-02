@@ -1,12 +1,8 @@
 import asyncio
-import base64
-import hashlib
 import logging
 import re
-import secrets
 import tempfile
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -16,6 +12,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandl
 from . import main
 from .db import clear_state, get_state, set_state
 from .integrations import WooClient
+from .media_upload import upload_media
 
 log = logging.getLogger('orderscutella.product')
 
@@ -24,8 +21,7 @@ ACTIVE = 1
 CTX_KEY = 'cutella_vesta_product'
 GALLERY_BATCHES = {}
 GALLERY_DEBOUNCE_SECONDS = 1.15
-GALLERY_IMAGE_CONCURRENCY = 2
-MEDIA_CHUNK_SIZE = 5120
+GALLERY_IMAGE_CONCURRENCY = 1
 
 CATEGORY_PHRASE_ALIASES = (
     (re.compile(r'\bپاک\s*کننده(?:\s*ها)?\b'), 'شوینده'),
@@ -60,51 +56,8 @@ def _save(uid, step, data):
     set_state(uid, 'woo_product', step, data)
 
 
-def _b64url(data):
-    return base64.urlsafe_b64encode(data).decode().rstrip('=')
-
-
 def _fast_upload_media(path, filename):
-    """Same signed chunk strategy used by OrdersVesta product UX."""
-    client = WooClient()
-    path = Path(path)
-    data = path.read_bytes()
-    if not data:
-        raise RuntimeError('فایل تصویر خالی است.')
-
-    upload_id = secrets.token_hex(16)
-    digest = hashlib.sha256(data).hexdigest()
-    safe_name = Path(filename or path.name).name or 'cutella-product.jpg'
-
-    begin = client._signed_get('media_begin', {
-        'upload_id': upload_id,
-        'filename': safe_name,
-        'size': len(data),
-        'sha256': digest,
-    })
-    if begin.get('already_finished') and isinstance(begin.get('result'), dict):
-        return begin['result']
-
-    chunks = []
-    for offset in range(0, len(data), MEDIA_CHUNK_SIZE):
-        chunk = data[offset:offset + MEDIA_CHUNK_SIZE]
-        chunks.append((offset, _b64url(chunk)))
-
-    def send_chunk(item):
-        offset, encoded = item
-        return client._signed_get('media_chunk', {
-            'upload_id': upload_id,
-            'offset': offset,
-            'data': encoded,
-        })
-
-    workers = max(1, min(6, len(chunks)))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(send_chunk, item) for item in chunks]
-        for future in as_completed(futures):
-            future.result()
-
-    return client._signed_get('media_finish', {'upload_id': upload_id})
+    return upload_media(WooClient(), path, filename)
 
 
 def type_keyboard():
@@ -399,19 +352,22 @@ async def _process_gallery_batch(uid, chat_id, group_id, bot):
 
         async def worker(idx, fid):
             async with sem:
-                media = await _upload_telegram_photo(bot, fid, idx)
-                return idx, media
+                try:
+                    media = await _upload_telegram_photo(bot, fid, idx)
+                    return idx, media, None
+                except Exception as exc:
+                    return idx, None, str(exc)
 
         tasks = [asyncio.create_task(worker(i, fid)) for i, fid in enumerate(file_ids)]
         results = {}
-        failures = []
+        failures = {}
         completed = 0
         for future in asyncio.as_completed(tasks):
-            try:
-                idx, media = await future
+            idx, media, error = await future
+            if error is None:
                 results[idx] = media
-            except Exception as exc:
-                failures.append(str(exc))
+            else:
+                failures[idx] = error
             completed += 1
             await _safe_edit(progress, f'📤 در حال آپلود گالری…\n{completed}/{len(file_ids)} عکس\n{_bar(completed, len(file_ids))}')
 
@@ -420,13 +376,14 @@ async def _process_gallery_batch(uid, chat_id, group_id, bot):
         data['images'] = ([data['cover']] if data.get('cover') else []) + list(data.get('gallery') or [])
 
         if failures:
+            failed_numbers = '، '.join(str(i + 1) for i in sorted(failures))
             _save(uid, 'gallery', data)
-            detail = failures[0]
+            detail = next(iter(failures.values()))
             if 'Unknown operation' in detail:
                 detail = 'نسخه Cutella Bot Bridge نصب‌شده روی وردپرس قدیمی است و آپلود عکس را پشتیبانی نمی‌کند.'
             await _safe_edit(
                 progress,
-                f'⚠️ آپلود گالری کامل نشد.\nموفق: {len(uploaded)}/{len(file_ids)}\n{_bar(len(uploaded), len(file_ids))}\n\n{detail}\nعکس‌های ناموفق را دوباره یکجا بفرستید.'
+                f'⚠️ آپلود گالری کامل نشد.\nموفق: {len(uploaded)}/{len(file_ids)}\n{_bar(len(uploaded), len(file_ids))}\n\n{detail}\nعکس‌های شمارهٔ {failed_numbers} از همین آلبوم ناموفق بودند؛ فقط همان‌ها را دوباره بفرستید.'
             )
             return
 
@@ -488,6 +445,12 @@ async def cancel(update: Update, context):
 
 
 async def photo(update: Update, context):
+    # Telegram Message objects must never become ConversationHandler states.
+    await _photo(update, context)
+    return ACTIVE if _state(update.effective_user.id) else ConversationHandler.END
+
+
+async def _photo(update: Update, context):
     if not await main.guard(update):
         return
     uid = update.effective_user.id
@@ -522,7 +485,7 @@ async def photo(update: Update, context):
             await _safe_edit(status, '✅ کاور آپلود شد.\n██████████ 100%')
             return await update.message.reply_text(
                 '🖼 حالا عکس‌های گالری را **یکجا به صورت آلبوم** بفرستید.\n\n'
-                'همه عکس‌ها را در تلگرام با هم انتخاب و Send کنید؛ ربات بعد از دریافت کل آلبوم آن‌ها را موازی آپلود می‌کند و Progress را نشان می‌دهد.\n\n'
+                'همه عکس‌ها را در تلگرام با هم انتخاب و Send کنید؛ ربات بعد از دریافت کل آلبوم آن‌ها را آپلود می‌کند و پیشرفت را نشان می‌دهد.\n\n'
                 'اگر گالری ندارید «بدون گالری» را بزنید.',
                 reply_markup=gallery_keyboard(),
                 parse_mode='Markdown',
@@ -1032,10 +995,26 @@ async def callback(update: Update, context):
     return ACTIVE
 
 
+class SavedProductFilter(filters.MessageFilter):
+    def filter(self, message):
+        return bool(message.from_user and _state(message.from_user.id))
+
+
+async def resume_text(update, context):
+    return await text(update, context)
+
+
 def handler():
     cancel_text = MessageHandler(filters.Regex(r'^(?:❌ لغو عملیات|❌ لغو|⬅️ منوی اصلی)$'), cancel)
     return ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r'^(?:🛍 ثبت محصول|➕ ثبت محصول جدید)$'), begin)],
+        entry_points=[
+            MessageHandler(filters.Regex(r'^(?:🛍 ثبت محصول|➕ ثبت محصول جدید)$'), begin),
+            # SQLite survives deploys; rebuild the in-memory conversation on
+            # the next photo, text, or wizard button after a process restart.
+            MessageHandler(SavedProductFilter() & filters.PHOTO, photo),
+            MessageHandler(SavedProductFilter() & filters.TEXT & ~filters.COMMAND, resume_text),
+            CallbackQueryHandler(callback, pattern=r'^woo:'),
+        ],
         states={
             ACTIVE: [
                 cancel_text,

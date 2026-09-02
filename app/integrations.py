@@ -183,6 +183,8 @@ class WooClient:
         try:
             body = response.json()
         except Exception:
+            if response.status_code in (408, 429) or response.status_code >= 500:
+                raise RuntimeError(f'Bridge: HTTP {response.status_code}: temporary upstream failure')
             raise RuntimeError('Bridge پاسخ JSON معتبر نداد.')
         if response.status_code >= 400 or not isinstance(body, dict) or not body.get('success'):
             data = body.get('data') if isinstance(body, dict) else None
@@ -190,20 +192,22 @@ class WooClient:
                 detail = data.get('message') or 'Bridge request failed.'
             else:
                 detail = str(data or 'Bridge request failed.')
-            raise RuntimeError(f'Bridge: {detail}')
+            raise RuntimeError(f'Bridge: HTTP {response.status_code}: {detail}')
         data = body.get('data')
         return data if isinstance(data, dict) else {}
 
     def _signed_get(self, op, payload=None):
         errors = []
-        deadline = time.monotonic() + 15.0
-        for label, endpoint in self._endpoints():
+        finishing = op == 'media_finish'
+        deadline = time.monotonic() + (120.0 if finishing else 15.0)
+        endpoints = self._endpoints()
+        for label, endpoint in (endpoints[:1] if finishing else endpoints):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
             params = self._signed_params(op, payload)
             try:
-                response = self._stdlib_get(endpoint, params, min(12.0, remaining))
+                response = self._stdlib_get(endpoint, params, min(120.0 if finishing else 12.0, remaining))
                 return self._decode(response)
             except RuntimeError as exc:
                 # Application-level bridge errors are useful and safe to show.
