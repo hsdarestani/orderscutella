@@ -129,9 +129,11 @@ jobs:
             except Exception as exc:
                 text = str(exc)
                 print('paid-order-probe=', text)
-                if 'Unknown operation' in text or 'unknown operation' in text.lower():
+                if 'آدرس سایت Cutella تنظیم نشده است' in text:
+                    print('Cutella site connection is not configured yet; complete setup from Telegram.')
+                elif 'Unknown operation' in text or 'unknown operation' in text.lower():
                     raise SystemExit('LIVE_CUTELLA_WORDPRESS_BRIDGE_IS_OLD')
-                if 'Invalid Vestaland receipt' not in text:
+                elif 'Invalid Vestaland receipt' not in text:
                     raise SystemExit('UNEXPECTED_PAID_ORDER_PROBE_RESPONSE: ' + text)
             else:
                 raise SystemExit('PAID_ORDER_PROBE_UNEXPECTEDLY_SUCCEEDED')
