@@ -42,6 +42,19 @@ jobs:
             set -euo pipefail
             export DEBIAN_FRONTEND=noninteractive
 
+            case " $(hostname -I) " in
+              *" 82.165.187.14 "*) echo "Shared Strato VPS verified" ;;
+              *) echo "Target is not the intended shared VPS; aborting."; exit 1 ;;
+            esac
+            if [ -z "${BOTTOKEN:-}" ]; then
+              echo "Required secret BOTTOKEN is missing; aborting."
+              exit 1
+            fi
+            if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+              apt-get update -qq
+              apt-get install -y git curl
+            fi
+
             APP_DIR=/opt/orderscutella
             REPO=https://github.com/hsdarestani/orderscutella.git
             DOMAIN=orderscutella.smarbiz.sbs
